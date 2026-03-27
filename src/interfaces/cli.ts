@@ -183,10 +183,82 @@ program.command("init").argument("[repo]", "Repository (owner/repo) to clone and
 program.command("plan").argument("<description>", "Description of work to plan")
   .action(async (description: string) => {
     const config = loadConfig();
-    const { state, github } = createServices(config);
+    const github = new GitHubManager(config.github);
+    github.setCwd(process.cwd());
+
+    // Smart repo detection — find or create
+    let repoFullName = github.getRepoFullName();
+
+    if (!repoFullName) {
+      // No git repo here — ask and create one
+      console.log(chalk.yellow("\nNo git repo detected in this directory."));
+      const dirName = process.cwd().split(/[/\\]/).pop() || "project";
+
+      const { default: inquirer } = await import("inquirer");
+      const { account } = await inquirer.prompt([{
+        type: "list",
+        name: "account",
+        message: "Which GitHub account should own this repo?",
+        choices: [
+          { name: "zanijr (personal)", value: "zanijr" },
+          { name: "ZbOscar (company)", value: "ZbOscar" },
+        ],
+      }]);
+
+      const { repoName } = await inquirer.prompt([{
+        type: "input",
+        name: "repoName",
+        message: "Repo name:",
+        default: dirName,
+      }]);
+
+      const { visibility } = await inquirer.prompt([{
+        type: "list",
+        name: "visibility",
+        message: "Visibility:",
+        choices: ["private", "public"],
+        default: "private",
+      }]);
+
+      const spinner0 = ora(`Creating ${account}/${repoName}...`).start();
+      try {
+        // Init git if needed
+        try { execSync("git rev-parse --git-dir", { stdio: "pipe", cwd: process.cwd() }); }
+        catch { execSync("git init", { stdio: "pipe", cwd: process.cwd() }); }
+
+        // Create initial commit if empty
+        try { execSync("git log -1", { stdio: "pipe", cwd: process.cwd() }); }
+        catch {
+          execSync('git add -A && git commit --allow-empty -m "Initial commit"', {
+            stdio: "pipe", cwd: process.cwd(),
+          });
+        }
+
+        // Create remote repo and push
+        const visFlag = visibility === "public" ? "--public" : "--private";
+        execSync(`gh repo create ${account}/${repoName} ${visFlag} --source . --push`, {
+          stdio: "pipe", cwd: process.cwd(), encoding: "utf-8",
+        });
+
+        repoFullName = `${account}/${repoName}`;
+        github.setCwd(process.cwd());
+
+        // Set up forge labels
+        github.bootstrapLabels(repoFullName);
+        spinner0.succeed(`Created ${repoFullName}`);
+      } catch (err) {
+        spinner0.fail("Failed to create repo");
+        log.error(String(err));
+        process.exit(1);
+      }
+    } else {
+      // Repo exists — ensure forge labels
+      try { github.bootstrapLabels(repoFullName); } catch { /* labels may exist */ }
+    }
+
+    const { state } = createServices(config);
     const spinner = ora("Planning tasks with Claude...").start();
     try {
-      const repoFullName = github.getRepoFullName() ?? `${config.github.org}/unknown`;
       const planPrompt = buildPlanPrompt(description);
       const rawOutput = execSync(
         `claude --model ${config.agents.boss_model} --max-turns 3 --output-format json -p ${JSON.stringify(planPrompt)}`,
