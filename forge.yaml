@@ -71,6 +71,18 @@ telegram:
     - "review_ready"
     - "all_done"
 
+deploy:
+  # Reverse SSH tunnel — server reaches Windows PC via localhost:2222
+  pc:
+    ssh_host: "localhost"
+    ssh_port: 2222
+    ssh_user: "zbonham"
+    drives:
+      Q: "\\\\172.16.2.115\\Main"           # DocumentEngine, apps
+      T: "\\\\172.16.2.115\\wwwroot"        # Web apps, FormsEditor
+      W: "\\\\172.16.2.115\\scripts"        # Scripts, DynaChange
+    projects_dir: "C:\\Users\\zbonham\\source\\repos"
+
 state:
   dir: ".forge"
   heartbeat_interval: 60

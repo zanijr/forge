@@ -1,0 +1,25 @@
+[Unit]
+Description=Forge Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=zbonham
+WorkingDirectory=/home/zbonham/forge
+ExecStart=/usr/bin/npx tsx src/interfaces/telegram-bot.ts
+Restart=always
+RestartSec=10
+
+# Environment — load from .env file on the server
+EnvironmentFile=/home/zbonham/forge/.env
+
+# Projects directory — the bot discovers projects here
+Environment=FORGE_PROJECTS_DIR=/home/zbonham/projects
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=forge-telegram
+
+[Install]
+WantedBy=multi-user.target
