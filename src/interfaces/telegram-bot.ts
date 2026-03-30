@@ -151,6 +151,7 @@ bot.onText(/\/start/, (msg) => {
     "/projects — List available projects\n" +
     "/target <name> — Switch active project\n" +
     "/clone <owner/repo> — Clone a repo to the server\n" +
+    "/clone-all [org] — Clone all repos from a GitHub org\n" +
     "/pull — Git pull the active project\n" +
     "/deploy — Deploy to Windows PC / mapped drives\n" +
     "/help — This message\n\n" +
@@ -174,6 +175,7 @@ bot.onText(/\/help/, (msg) => {
     "/projects — List projects\n" +
     "/target <name> — Switch project\n" +
     "/clone <owner/repo> — Clone repo\n" +
+    "/clone-all [org] — Clone all repos\n" +
     "/pull — Pull active project\n" +
     "/deploy — Deploy to Windows PC",
     { parse_mode: "Markdown" },
@@ -268,6 +270,75 @@ bot.onText(/\/clone(?:\s+(.+))?/, async (msg, match) => {
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     await bot.sendMessage(msg.chat.id, `Clone failed: ${errMsg.slice(0, 1000)}`);
+  }
+});
+
+bot.onText(/\/clone-all(?:\s+(.+))?/, async (msg, match) => {
+  if (!isAuthorized(msg.chat.id)) return;
+  const org = match?.[1]?.trim() || config.github.org;
+
+  if (!org) {
+    await bot.sendMessage(msg.chat.id, "Usage: `/clone-all <org-or-user>`\nExample: `/clone-all ZbOscar`", { parse_mode: "Markdown" });
+    return;
+  }
+
+  try {
+    const projectsDir = process.env.FORGE_PROJECTS_DIR ?? join(process.env.HOME ?? "/home/zbonham", "projects");
+    await bot.sendMessage(msg.chat.id, `Listing repos for \`${org}\`...`, { parse_mode: "Markdown" });
+
+    // Use gh to list all repos
+    const repoList = execSync(
+      `gh repo list ${org} --limit 100 --json name,sshUrl --jq '.[] | .name + " " + .sshUrl'`,
+      { encoding: "utf-8", timeout: 30_000 },
+    ).trim();
+
+    if (!repoList) {
+      await bot.sendMessage(msg.chat.id, `No repos found for \`${org}\`. Make sure \`gh\` is authenticated on the server.`, { parse_mode: "Markdown" });
+      return;
+    }
+
+    const repos = repoList.split("\n").map((line) => {
+      const [name, url] = line.split(" ", 2);
+      return { name, url };
+    });
+
+    await bot.sendMessage(msg.chat.id, `Found ${repos.length} repos. Cloning...`);
+
+    let cloned = 0;
+    let skipped = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    for (const repo of repos) {
+      const clonePath = join(projectsDir, repo.name);
+      if (existsSync(clonePath)) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        execSync(`git clone "${repo.url}" "${clonePath}"`, { encoding: "utf-8", timeout: 120_000, stdio: "pipe" });
+        cloned++;
+      } catch (e) {
+        failed++;
+        errors.push(repo.name);
+      }
+
+      // Progress update every 5 repos
+      if ((cloned + skipped + failed) % 5 === 0) {
+        await bot.sendMessage(msg.chat.id, `Progress: ${cloned} cloned, ${skipped} skipped, ${failed} failed (${cloned + skipped + failed}/${repos.length})`);
+      }
+    }
+
+    let summary = `Done! ${cloned} cloned, ${skipped} already existed, ${failed} failed.`;
+    if (errors.length > 0) {
+      summary += `\nFailed: ${errors.join(", ")}`;
+    }
+    summary += "\n\nUse /projects to see them all.";
+    await bot.sendMessage(msg.chat.id, summary);
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    await bot.sendMessage(msg.chat.id, `Clone-all failed: ${errMsg.slice(0, 1000)}`);
   }
 });
 
@@ -646,7 +717,7 @@ bot.on("message", async (msg) => {
   // Skip commands — they're handled by onText handlers above
   if (msg.text.startsWith("/")) {
     // Unknown command
-    if (!msg.text.match(/^\/(start|help|status|approve|build|stop|review|checklist|agents|projects|target|clone|pull|deploy)/)) {
+    if (!msg.text.match(/^\/(start|help|status|approve|build|stop|review|checklist|agents|projects|target|clone|clone-all|pull|deploy)/)) {
       bot.sendMessage(msg.chat.id, "Unknown command. Use /help or just chat with me.");
     }
     return;
