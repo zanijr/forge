@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSyn
 import { join, basename } from "node:path";
 import type { Plan, Task, Agent, Finding } from "../types.js";
 import { PlanSchema, AgentSchema } from "../types.js";
+import { withLock } from "../utils/lockfile.js";
 
 const LOCK_STALE_MS = 60_000;
 const SUBDIRS = ["agents", "outputs", "prompts", "reviews", "worktrees"] as const;
