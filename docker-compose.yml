@@ -1,0 +1,25 @@
+services:
+  forge-worker:
+    build: .
+    container_name: forge-worker
+    network_mode: host
+    privileged: true
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GH_TOKEN=${GH_TOKEN}
+      - FORGE_API_TOKEN=${FORGE_API_TOKEN}
+      - FORGE_MAX_AGENTS=10
+    volumes:
+      - forge-repos:/repos
+      - forge-state:/app/.forge
+      - ${HOME}/.claude:/root/.claude:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  forge-repos:
+  forge-state:
