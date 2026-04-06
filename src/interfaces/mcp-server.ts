@@ -1,14 +1,12 @@
 import "dotenv/config";
-import { writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { loadConfig } from "../config.js";
 import { StateManager } from "../core/state-manager.js";
 import { Scheduler } from "../core/scheduler.js";
@@ -148,25 +146,28 @@ async function handlePlan(description: string, targetRoot?: string): Promise<str
   const repoFullName = github.getRepoFullName() ?? `${config.github.org}/unknown`;
   const planPrompt = buildPlanPrompt(description);
 
-  const tmpFile = join(tmpdir(), `forge-plan-${Date.now()}.md`);
-  writeFileSync(tmpFile, planPrompt);
-  let rawOutput: string;
+  const result = spawnSync("claude", [
+    "--model", config.agents.boss_model,
+    "--max-turns", "5",
+    "-p", "-",
+  ], {
+    input: planPrompt,
+    encoding: "utf-8",
+    cwd: projectRoot,
+    timeout: 300_000,
+  });
+  if (result.error) throw result.error;
+  const rawOutput = result.stdout;
+  if (!rawOutput) throw new Error(result.stderr || `claude exited with code ${result.status}`);
+
+  let content = rawOutput;
   try {
-    rawOutput = execSync(
-      `cat "${tmpFile}" | claude --model ${config.agents.boss_model} --max-turns 3 --output-format json -p -`,
-      { encoding: "utf-8", cwd: projectRoot, shell: "/bin/bash" },
-    );
-  } finally {
-    try { unlinkSync(tmpFile); } catch { /* cleanup best-effort */ }
-  }
-
-  let parsed: { result?: string } & Record<string, unknown>;
-  try { parsed = JSON.parse(rawOutput); }
-  catch { throw new Error("Claude returned invalid JSON"); }
-
-  const content = typeof parsed.result === "string" ? parsed.result : rawOutput;
+    const envelope = JSON.parse(rawOutput) as { result?: string };
+    if (typeof envelope.result === "string") content = envelope.result;
+  } catch { /* raw text, use as-is */ }
+  content = content.replace(/```json\s*/g, "").replace(/```\s*/g, "");
   const jsonMatch = content.match(/\{[\s\S]*"tasks"[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Could not find tasks JSON in Claude output");
+  if (!jsonMatch) throw new Error(`Could not find tasks JSON in Claude output. Got: ${content.substring(0, 200)}`);
 
   const tasksData = JSON.parse(jsonMatch[0]) as {
     tasks: Array<{
