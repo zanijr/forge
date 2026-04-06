@@ -21,7 +21,18 @@ interface WorkerRecord {
   finishedAt?: string;
 }
 
+interface ReviewerRecord {
+  id: string;
+  type: string;
+  pid?: number;
+  status: "running" | "completed" | "failed";
+  outputPath: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
 const workers = new Map<string, WorkerRecord>();
+const reviewers = new Map<string, ReviewerRecord>();
 const FORGE_DIR = process.env.FORGE_DIR || "/app/.forge";
 const REPOS_DIR = process.env.REPOS_DIR || "/repos";
 const MAX_AGENTS = parseInt(process.env.FORGE_MAX_AGENTS || "10", 10);
@@ -241,6 +252,111 @@ async function handleExec(
   }
 }
 
+// ─── Review Helpers ──────────────────────────────────────────────
+
+function refreshReviewer(r: ReviewerRecord): void {
+  if (r.status !== "running") return;
+  if (!r.pid || !isProcessAlive(r.pid)) {
+    let output: string | null = null;
+    try {
+      if (existsSync(r.outputPath)) {
+        output = readFileSync(r.outputPath, "utf-8").trim() || null;
+      }
+    } catch { /* ignore */ }
+    r.status = output ? "completed" : "failed";
+    r.finishedAt = new Date().toISOString();
+  }
+}
+
+// ─── Review Route Handlers ───────────────────────────────────────
+
+async function handleSpawnReview(
+  req: import("node:http").IncomingMessage,
+  res: import("node:http").ServerResponse,
+): Promise<void> {
+  const body = await parseBody(req);
+  const { reviewTypes, branch, repoFullName, model, projectRoot } = body as {
+    reviewTypes: string[]; branch: string; repoFullName: string;
+    model?: string; projectRoot?: string;
+  };
+
+  if (!Array.isArray(reviewTypes) || reviewTypes.length === 0) {
+    json(res, 400, { error: "reviewTypes must be a non-empty array" });
+    return;
+  }
+
+  // Check capacity
+  let running = 0;
+  for (const w of workers.values()) { refreshWorker(w); if (w.status === "running") running++; }
+  for (const r of reviewers.values()) { refreshReviewer(r); if (r.status === "running") running++; }
+  if (running >= MAX_AGENTS) {
+    json(res, 429, { error: "At capacity", running, max: MAX_AGENTS });
+    return;
+  }
+
+  const cwd = projectRoot || FORGE_DIR;
+  for (const dir of ["outputs", "prompts"]) {
+    mkdirSync(join(FORGE_DIR, dir), { recursive: true });
+  }
+
+  const claudePath = resolveClaudePath();
+  const spawnedReviewers: Array<{ id: string; type: string; status: string }> = [];
+
+  for (const type of reviewTypes) {
+    const id = `reviewer-${type}-${Date.now()}`;
+    const outputPath = join(FORGE_DIR, "outputs", `${id}.json`);
+    const errPath = join(FORGE_DIR, "outputs", `${id}.err`);
+    const prompt = `Review the code changes on branch ${branch} in ${repoFullName || "this repo"} for ${type} issues. Output a JSON array of findings.`;
+
+    const outFd = openSync(outputPath, "w");
+    const errFd = openSync(errPath, "w");
+
+    const child = cpSpawn(claudePath, [
+      "-p", prompt,
+      "--model", model || "sonnet",
+      "--max-turns", "10",
+      "--output-format", "json",
+      "--permission-mode", "bypassPermissions",
+    ], {
+      cwd,
+      detached: true,
+      stdio: ["ignore", outFd, errFd],
+    });
+    child.unref();
+
+    const record: ReviewerRecord = {
+      id, type, pid: child.pid, status: "running",
+      outputPath, startedAt: new Date().toISOString(),
+    };
+    reviewers.set(id, record);
+    spawnedReviewers.push({ id, type, status: "running" });
+  }
+
+  json(res, 201, { reviewers: spawnedReviewers });
+}
+
+function handleGetReviewer(
+  res: import("node:http").ServerResponse,
+  id: string,
+): void {
+  const r = reviewers.get(id);
+  if (!r) { json(res, 404, { error: "Reviewer not found" }); return; }
+  refreshReviewer(r);
+
+  let output: string | null = null;
+  if (r.status !== "running") {
+    try {
+      if (existsSync(r.outputPath)) output = readFileSync(r.outputPath, "utf-8").trim() || null;
+    } catch { /* ignore */ }
+  }
+
+  json(res, 200, {
+    id: r.id, type: r.type, status: r.status, pid: r.pid,
+    startedAt: r.startedAt, finishedAt: r.finishedAt,
+    output,
+  });
+}
+
 // ─── HTTP Server ─────────────────────────────────────────────────
 
 const server = createServer(async (req, res) => {
@@ -268,6 +384,10 @@ const server = createServer(async (req, res) => {
       handleGetWorker(res, url.split("/")[2]);
     } else if (url.startsWith("/workers/") && req.method === "DELETE") {
       handleKillWorker(res, url.split("/")[2]);
+    } else if (url === "/review" && req.method === "POST") {
+      await handleSpawnReview(req, res);
+    } else if (url.startsWith("/review/") && req.method === "GET") {
+      handleGetReviewer(res, url.slice("/review/".length));
     } else {
       json(res, 404, { error: "Not found" });
     }
@@ -277,8 +397,13 @@ const server = createServer(async (req, res) => {
 });
 
 const PORT = parseInt(process.env.PORT || "8787", 10);
-server.listen(PORT, () => {
-  console.log(`Forge Worker API listening on :${PORT}`);
-  console.log(`  Max agents: ${MAX_AGENTS}`);
-  console.log(`  Auth: ${API_TOKEN ? "enabled" : "disabled (no FORGE_API_TOKEN)"}`);
-});
+
+export { server, workers, reviewers };
+
+if (process.env.NODE_ENV !== "test") {
+  server.listen(PORT, () => {
+    console.log(`Forge Worker API listening on :${PORT}`);
+    console.log(`  Max agents: ${MAX_AGENTS}`);
+    console.log(`  Auth: ${API_TOKEN ? "enabled" : "disabled (no FORGE_API_TOKEN)"}`);
+  });
+}
