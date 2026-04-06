@@ -30,6 +30,7 @@ services:
       - FORGE_TELEGRAM_CHAT=${FORGE_TELEGRAM_CHAT}
       - GH_TOKEN=${GH_TOKEN}
       - FORGE_API_TOKEN=${FORGE_API_TOKEN}
+      - FORGE_PROJECTS_DIR=/repos
     volumes:
       - forge-repos:/repos
       - forge-state:/app/.forge
