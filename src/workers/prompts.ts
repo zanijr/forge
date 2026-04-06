@@ -10,7 +10,10 @@ import type { SpawnOptions } from "../execution/engine.js";
  * it should use for progress reporting, branch management, and
  * PR creation.
  */
-export function buildWorkerPrompt(opts: SpawnOptions): string {
+export function buildWorkerPrompt(
+  opts: SpawnOptions,
+  supervisorEnabled?: boolean,
+): string {
   const { task, repoFullName } = opts;
   const issueRef = task.issue_number ?? "";
   const criteriaList = task.acceptance_criteria
@@ -27,6 +30,39 @@ export function buildWorkerPrompt(opts: SpawnOptions): string {
     task.conflicts_with.length > 0
       ? `\n## Conflicts\nThis task may conflict with: ${task.conflicts_with.map((c) => `\`${c}\``).join(", ")}.\nCoordinate carefully and avoid editing the same files when possible.\n`
       : "";
+
+  const completionInstructions = supervisorEnabled
+    ? `4. Stage all your changes:
+   \`git add -A\`
+5. When ALL acceptance criteria are met, write a review request file:
+   Create \`.forge/outputs/${task.id}-review-request.json\` with the following JSON schema:
+   \`\`\`json
+   {
+     "task_id": "${task.id}",
+     "branch": "<current branch name from git branch --show-current>",
+     "summary": "<concise description of what was implemented>",
+     "criteria_met": [
+       "<criterion 1 description>",
+       "<criterion 2 description>"
+     ]
+   }
+   \`\`\`
+   - \`task_id\`: the task identifier (string)
+   - \`branch\`: the current git branch name
+   - \`summary\`: 1-3 sentences describing what was implemented
+   - \`criteria_met\`: array of strings, one entry per acceptance criterion you satisfied
+   Do NOT commit, push, or create a PR — the supervisor will handle that.
+   Comment on the issue:
+   \`gh issue comment ${issueRef} --repo ${repoFullName} --body "Task complete. Staged changes and wrote review request."\``
+    : `4. Commit frequently with clear messages:
+   \`git add -A && git commit -m "feat: <what you did>"\`
+5. When ALL acceptance criteria are met:
+   a. Push your branch:
+      \`git push -u origin $(git branch --show-current)\`
+   b. Create a PR:
+      \`gh pr create --repo ${repoFullName} --base main --title "feat: ${escapeTick(task.title)}" --body "Closes #${issueRef}"\`
+   c. Comment on the issue:
+      \`gh issue comment ${issueRef} --repo ${repoFullName} --body "Task complete. PR ready for review."\``;
 
   return `# Forge Worker Agent — Task #${issueRef || task.id}
 
@@ -45,15 +81,7 @@ ${dependencyBlock}${conflictBlock}
 1. Read CLAUDE.md for project conventions before writing any code.
 2. Implement the task, working ONLY on files relevant to this task.
 3. Write tests for your changes.
-4. Commit frequently with clear messages:
-   \`git add -A && git commit -m "feat: <what you did>"\`
-5. When ALL acceptance criteria are met:
-   a. Push your branch:
-      \`git push -u origin $(git branch --show-current)\`
-   b. Create a PR:
-      \`gh pr create --repo ${repoFullName} --base main --title "feat: ${escapeTick(task.title)}" --body "Closes #${issueRef}"\`
-   c. Comment on the issue:
-      \`gh issue comment ${issueRef} --repo ${repoFullName} --body "Task complete. PR ready for review."\`
+${completionInstructions}
 6. If you are BLOCKED on something, comment on the issue and STOP.
    Do NOT spin trying workarounds — just report the blocker clearly.
 
@@ -63,8 +91,7 @@ After completing each acceptance criterion, comment on the issue:
 
 ## Constraints
 - Do NOT modify files outside your task's scope.
-- Do NOT merge your own PR.
-- Do NOT work on other tasks.
+${supervisorEnabled ? "- Do NOT commit, push, or create a PR — stage only and write the review request.\n" : "- Do NOT merge your own PR.\n"}- Do NOT work on other tasks.
 - If tests fail, fix them before marking complete.
 - Keep commits atomic — one logical change per commit.
 - Priority: ${task.priority}
