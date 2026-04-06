@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "dotenv/config";
 import TelegramBot from "node-telegram-bot-api";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, basename } from "node:path";

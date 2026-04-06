@@ -20,6 +20,7 @@
     "@types/inquirer": "^9.0.9",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
+    "dotenv": "^17.4.1",
     "inquirer": "^13.3.2",
     "node-telegram-bot-api": "^0.66.0",
     "ora": "^8.2.0",

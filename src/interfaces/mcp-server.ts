@@ -1,3 +1,7 @@
+import "dotenv/config";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -144,10 +148,17 @@ async function handlePlan(description: string, targetRoot?: string): Promise<str
   const repoFullName = github.getRepoFullName() ?? `${config.github.org}/unknown`;
   const planPrompt = buildPlanPrompt(description);
 
-  const rawOutput = execSync(
-    `claude --model ${config.agents.boss_model} --max-turns 3 --output-format json -p ${JSON.stringify(planPrompt)}`,
-    { encoding: "utf-8", cwd: projectRoot },
-  );
+  const tmpFile = join(tmpdir(), `forge-plan-${Date.now()}.md`);
+  writeFileSync(tmpFile, planPrompt);
+  let rawOutput: string;
+  try {
+    rawOutput = execSync(
+      `cat "${tmpFile}" | claude --model ${config.agents.boss_model} --max-turns 3 --output-format json -p -`,
+      { encoding: "utf-8", cwd: projectRoot, shell: "/bin/bash" },
+    );
+  } finally {
+    try { unlinkSync(tmpFile); } catch { /* cleanup best-effort */ }
+  }
 
   let parsed: { result?: string } & Record<string, unknown>;
   try { parsed = JSON.parse(rawOutput); }

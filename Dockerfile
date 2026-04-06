@@ -1,9 +1,9 @@
 FROM node:20-slim
 
-# Install system dependencies + VPN + SMB
+# Install system dependencies + VPN + SMB + gosu (for entrypoint user switching)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git tmux curl ca-certificates gnupg openssh-client \
-    strongswan xl2tpd ppp cifs-utils sshfs lftp \
+    strongswan xl2tpd ppp cifs-utils sshfs lftp gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Install gh CLI
@@ -36,16 +36,19 @@ RUN useradd -m -s /bin/bash forge
 RUN mkdir -p /repos /app/.forge/agents /app/.forge/outputs /app/.forge/prompts /app/.forge/worktrees \
     && chown -R forge:forge /repos /app/.forge /app
 
-# Symlink .claude.json so Claude finds auth from mounted .claude/ directory
-RUN ln -sf /home/forge/.claude/.claude.json /home/forge/.claude.json
-
-# Git config for worktree operations (as forge user)
+# Git config (as forge user)
 USER forge
 RUN git config --global user.name "Forge Worker" \
     && git config --global user.email "forge@bozits.com" \
     && git config --global init.defaultBranch main \
     && git config --global --add safe.directory '*'
 
+# Back to root for entrypoint (it drops to forge after fixing permissions)
+USER root
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 EXPOSE 8787
 
+ENTRYPOINT ["entrypoint.sh"]
 CMD ["node", "dist/server/worker-api.js"]

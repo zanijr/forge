@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+import "dotenv/config";
 
 import { Command } from "commander";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 import chalk from "chalk";
@@ -269,10 +271,17 @@ program.command("plan").argument("<description>", "Description of work to plan")
     const spinner = ora("Planning tasks with Claude...").start();
     try {
       const planPrompt = buildPlanPrompt(description);
-      const rawOutput = execSync(
-        `claude --model ${config.agents.boss_model} --max-turns 3 --output-format json -p ${JSON.stringify(planPrompt)}`,
-        { encoding: "utf-8", cwd: process.cwd() },
-      );
+      const tmpFile = join(tmpdir(), `forge-plan-${Date.now()}.md`);
+      writeFileSync(tmpFile, planPrompt);
+      let rawOutput: string;
+      try {
+        rawOutput = execSync(
+          `cat "${tmpFile}" | claude --model ${config.agents.boss_model} --max-turns 3 --output-format json -p -`,
+          { encoding: "utf-8", cwd: process.cwd(), shell: "/bin/bash" },
+        );
+      } finally {
+        try { unlinkSync(tmpFile); } catch { /* cleanup best-effort */ }
+      }
       const rawTasks = parsePlanOutput(rawOutput);
       spinner.text = "Creating GitHub Issues...";
       const tasks = buildTasksFromRaw(rawTasks, github, repoFullName);

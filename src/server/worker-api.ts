@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createServer } from "node:http";
 import { spawn as cpSpawn, execSync } from "node:child_process";
 import {
