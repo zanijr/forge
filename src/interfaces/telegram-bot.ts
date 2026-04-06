@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import 'dotenv/config';
 import TelegramBot from "node-telegram-bot-api";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, basename } from "node:path";
@@ -150,6 +151,7 @@ bot.onText(/\/start/, (msg) => {
     "*Forge Multi-Agent Orchestrator*\n\n" +
     `Active project: \`${target.name}\` (${target.path})\n\n` +
     "Commands:\n" +
+    "/ping — Health check\n" +
     "/status — Agent and task status\n" +
     "/approve — Approve pending plan\n" +
     "/build — Start building\n" +
@@ -174,6 +176,7 @@ bot.onText(/\/help/, (msg) => {
   const target = getActiveTarget(msg.chat.id);
   bot.sendMessage(msg.chat.id,
     `Active: \`${target.name}\`\n\n` +
+    "/ping — Health check\n" +
     "/status — Current status\n" +
     "/approve — Approve plan\n" +
     "/build — Spawn agents\n" +
@@ -189,6 +192,14 @@ bot.onText(/\/help/, (msg) => {
     "/deploy — Deploy to Windows PC",
     { parse_mode: "Markdown" },
   );
+});
+
+// ─── Health Check ────────────────────────────────────────────────
+
+bot.onText(/\/ping/, (msg) => {
+  if (!isAuthorized(msg.chat.id)) return;
+  const target = getActiveTarget(msg.chat.id);
+  bot.sendMessage(msg.chat.id, `Pong! Project: ${target.name}`);
 });
 
 // ─── Project Management Commands ─────────────────────────────────
@@ -722,7 +733,7 @@ bot.on("message", async (msg) => {
   // Skip commands — they're handled by onText handlers above
   if (msg.text.startsWith("/")) {
     // Unknown command
-    if (!msg.text.match(/^\/(start|help|status|approve|build|stop|review|checklist|agents|projects|target|clone|clone-all|pull|deploy)/)) {
+    if (!msg.text.match(/^\/(start|help|ping|status|approve|build|stop|review|checklist|agents|projects|target|clone|clone-all|pull|deploy)/)) {
       bot.sendMessage(msg.chat.id, "Unknown command. Use /help or just chat with me.");
     }
     return;
