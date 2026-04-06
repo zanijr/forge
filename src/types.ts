@@ -7,6 +7,7 @@ export const TaskStatus = z.enum([
   "in-progress",
   "blocked",
   "review",
+  "needs-review",
   "done",
   "failed",
 ]);
@@ -174,8 +175,24 @@ export const ForgeConfigSchema = z.object({
     dir: z.string().default(".forge"),
     heartbeat_interval: z.number().default(60),
   }).default({}),
+  supervisor: z.object({
+    supervisor_enabled: z.boolean().default(true),
+    supervisor_model: z.string().default("sonnet"),
+    supervisor_criteria: z.array(z.string()).default([]),
+    max_supervisor_rounds: z.number().default(2),
+  }).default({}),
 });
 export type ForgeConfig = z.infer<typeof ForgeConfigSchema>;
+
+// ─── Supervisor Finding ──────────────────────────────────────────
+
+export interface SupervisorFinding {
+  task_id: string;
+  round: number;
+  verdict: "pass" | "fail" | "needs-revision";
+  findings: string[];
+  feedback: string;
+}
 
 // ─── Worker Handle ───────────────────────────────────────────────
 
